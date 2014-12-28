@@ -60,13 +60,13 @@
   (-read [this path]))
 
 (defn read
+  ([store] (read store [] nil))
   ([store path] (read store path nil))
   ([store path default]
      (when *component*
        (register-path *component* store path))
      (let [res (-read store path)]
        (if res res default))))
-
 
 (defprotocol ITransact
   (-transact! [this path f]))
