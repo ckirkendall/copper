@@ -27,6 +27,14 @@
 (defn store [obj]
   (-store obj))
 
+
+(defprotocol IPath
+  (-path [this]))
+
+(defn path [obj]
+  (-path obj))
+
+
 (defprotocol INotify
   (-notify [this path]))
 
@@ -51,10 +59,13 @@
 (defprotocol IReadable
   (-read [this path]))
 
-(defn read [store path]
-  (when *component*
-    (register-path *component* store path))
-  (-read store path))
+(defn read
+  ([store path] (read store path nil))
+  ([store path default]
+     (when *component*
+       (register-path *component* store path))
+     (let [res (-read store path)]
+       (if res res default))))
 
 
 (defprotocol ITransact
@@ -122,6 +133,41 @@
 
 
 
+
+;; ---------------------------------------------------------------------
+;; Helper Functions
+
+
+(defn add-to [type container value]
+  (if (empty? container)
+    (conj type value)
+    (conj container value)))
+
+
+(defn register-path [component store path]
+  (aset component "_paths"
+        (add-to #{} (aget component "_paths") [store path])))
+
+
+(defn build-path
+  ([path-parts] (build-path [] path-parts))
+  ([seed [part & rparts]]
+     (cond
+      (nil? part)
+      seed
+
+      (satisfies? IPath part)
+      (concat seed (path part))
+
+      :else
+      (conj seed path))))
+
+
+(defn cleanup [component]
+  (let [paths (aget  component "_paths")]
+    (doseq [[db path] paths]
+      (remove-dep! db component path))))
+
 ;; ---------------------------------------------------------------------
 ;; Simple Store Cursor
 
@@ -175,9 +221,13 @@
 (defn sub-cursor
   "takes a path and existing cursor and returns a cursor
    scoped to that path"
-  [cursor path]
-  (let [db cursor]
+  [cursor & path-parts]
+  (let [db cursor
+        path (build-path path-parts)]
     (reify
+      IPath
+      (-path [this] path)
+      
       IReadable
       (-read [_  sub-path]
         (read cursor (concat path sub-path)))
@@ -185,27 +235,6 @@
       ITransact
       (-transact! [_ sub-path value]
         (transact! cursor (concat path sub-path) value)))))
-
-
-;; ---------------------------------------------------------------------
-;; Helper Functions
-
-
-(defn add-to [type container value]
-  (if (empty? container)
-    (conj type value)
-    (conj container value)))
-
-
-(defn register-path [component store path]
-  (aset component "_paths"
-        (add-to #{} (aget component "_paths") [store path])))
-
-
-(defn cleanup [component]
-  (let [paths (aget  component "_paths")]
-    (doseq [[db path] paths]
-      (remove-dep! db component path))))
 
 
 
