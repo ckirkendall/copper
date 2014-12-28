@@ -86,8 +86,8 @@
 
 (defn where-fn [where]
   (fn [ctx]
-    (every? identity
-            (eval-form where ctx))))
+    (let [where-vec (eval-form where ctx)]
+      (every? identity where-vec))))
 
 
 (defn from-args [from args]
