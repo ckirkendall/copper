@@ -21,10 +21,10 @@
       (is (= nil (c/read state [:x]))))))
 
 
-(deftest transact-commit-test
+(deftest update-commit-test
   (testing "simple transact"
     (let [state (c/create-store (atom {:a {:b :fail}}))]
-      (c/transact! state [:a :b] :pass)
+      (c/update! state [:a :b] :pass)
       (is (not= :pass (c/read state [:a :b])))
       (c/commit state)
       (is (= :pass (c/read state [:a :b]))))))      
@@ -42,7 +42,7 @@
                          (-write writer (pr-str "COMP" {:state (.-state this)}))))]
       (is (= :c (binding [c/*component* component]
                   (c/read state [:a :b]))))
-      (c/transact! state [:a :b] :pass)
+      (c/update! state [:a :b] :pass)
       (is (= :failed (.-state component)))
       (c/commit state)
       (c/notify-deps state)
@@ -56,7 +56,7 @@
           root-c (c/component
                   (fn [_ _]
                     (dom/button #js{:id "button1"
-                                    :onClick #(c/transact! app-state [:a :b] :pass)})))
+                                    :onClick #(c/update! app-state [:a :b] :pass)})))
           root (c/root #{app-state} root-c root-element {})]
       (tu/simulate-click-event (tu/by-id "button1"))
       (js/setTimeout
@@ -75,7 +75,7 @@
                                 (dom/span #js{:id "s2"}
                                           (name r))
                                 (dom/button #js{:id "button2"
-                                                :onClick #(c/transact! app-state [:a :b] :pass)})))))
+                                                :onClick #(c/update! app-state [:a :b] :pass)})))))
           root (c/root root-c root-element {})]
       (c/register-store! root app-state)
       (is (= "fail" (.-innerHTML (tu/by-id "s2"))))

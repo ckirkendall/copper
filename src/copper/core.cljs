@@ -58,10 +58,19 @@
 
 
 (defprotocol ITransact
-  (-transact! [this path value]))
+  (-transact! [this path f]))
 
-(defn transact! [db path value]
-  (-transact! db path value))
+(defn transact!
+  ([db f]
+     (-transact! db [] f))
+  ([db path f]
+     (-transact! db path f))) 
+
+(defn update!
+  ([db value]
+     (-transact! db [] (fn [] value)))
+  ([db path value]
+     (-transact! db path (fn [] value))))
 
 
 (defprotocol ICommit
@@ -115,6 +124,7 @@
 
 ;; ---------------------------------------------------------------------
 ;; Simple Store Cursor
+
 (extend-type Atom
   IStore
   (-store [db]
@@ -135,16 +145,16 @@
         (get-in @db path))
 
       ITransact
-      (-transact! [_ path value]
+      (-transact! [_ path func]
         (swap! db update-in edit-queue (fn [paths]
-                                         (add-to [] paths {:path path :value value}))))
+                                         (add-to [] paths {:path path :ufn func}))))
 
       ICommit
       (-commit [_]
         (swap! db (fn [state]
                     (let [edits (get-in state edit-queue)
-                          new-state (reduce (fn [v {:keys [path value]}]
-                                              (assoc-in v path value))
+                          new-state (reduce (fn [v {:keys [path ufn]}]
+                                              (update-in v path ufn))
                                             state
                                             edits)]
                       (-> new-state
