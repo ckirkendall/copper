@@ -26,11 +26,18 @@
   core/ITransact
   (-transact! [this path func]
     (let [f (fn temp [source [path-part  & rpaths]]
-             (let [res (get source path-part)]
-               (if (satisfies? core/ITransact res)
-                 (core/transact! res (vec rpaths) func)
-                 (temp res rpaths))))]
-      (f source path))))
+              (if path-part
+                (let [res (get source path-part)]
+                  (if (satisfies? core/ITransact res)
+                    (core/transact! res (vec rpaths) func)
+                    (temp res rpaths)))
+                source))]
+      (f source path)))
+
+  ISeqable
+  (-seq [this]
+    (for [idx (count source)]
+      (sub-cursor this idx))))
 
  
 (def built-ins
