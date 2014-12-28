@@ -68,6 +68,7 @@
      (let [res (-read store path)]
        (if res res default))))
 
+
 (defprotocol ITransact
   (-transact! [this path f]))
 
@@ -152,15 +153,18 @@
 (defn build-path
   ([path-parts] (build-path [] path-parts))
   ([seed [part & rparts]]
-     (cond
-      (nil? part)
-      seed
+     (if part 
+       (let [res (cond
+                  (nil? part)
+                  seed
 
-      (satisfies? IPath part)
-      (concat seed (path part))
+                  (satisfies? IPath part)
+                  (concat seed (path part))
 
-      :else
-      (conj seed path))))
+                  :else
+                  (conj seed part))]
+         (build-path res rparts))
+       seed)))
 
 
 (defn cleanup [component]
@@ -234,8 +238,31 @@
 
       ITransact
       (-transact! [_ sub-path value]
-        (transact! cursor (concat path sub-path) value)))))
+        (transact! cursor (concat path sub-path) value))
 
+      IPrintWithWriter 
+      (-pr-writer [this writer _]
+        (-write writer
+                (pr-str "$"
+                        {:cursor cursor
+                         :path path}))))))
+
+
+;; ---------------------------------------------------------------------
+;; Extending Read to Base Assoc types
+
+(extend-protocol IReadable
+  PersistentHashMap
+  (-read [this path]
+    (get-in this path))
+
+  PersistentArrayMap
+  (-read [this path]
+    (get-in this path))
+
+  PersistentVector
+  (-read [this path]
+    (get-in this path)))
 
 
 ;; ---------------------------------------------------------------------

@@ -15,10 +15,17 @@
 
 
 (deftest read-test
-  (testing "simple read"
+  (testing "simple read on store"
     (let [state (c/create-store (atom {:a {:b :c}}))]
       (is (= :c (c/read state [:a :b])))
-      (is (= nil (c/read state [:x]))))))
+      (is (= nil (c/read state [:x])))))
+  (testing "read on clojure map"
+    (let [state {:a {:b :c}}]
+      (is (= :c (c/read state [:a :b])))
+      (is (= nil (c/read state [:x])))))
+  (testing "read on clojure map"
+    (let [state [:a [:b]]]
+      (is (= :b (c/read state [1 0]))))))
 
 
 (deftest update-commit-test
