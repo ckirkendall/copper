@@ -7,11 +7,36 @@
 
 
 (deftest query-test
-  (testing "simple query on clojure map"
+  (testing "simple query"
     (let [state (c/create-store (atom {:a [1 2 3]}))
           pcur (query '{:build {:val ($ ?a)}
                         :from [?a]}
                       (c/sub-cursor state :a))]
       (is (= 1 (c/read pcur [0 :val])))
       (is (= 2 (c/read pcur [1 :val])))
-      (is (= 3 (c/read pcur [2 :val]))))))
+      (is (= 3 (c/read pcur [2 :val])))))
+  
+  (testing "query with seq breakdown"
+    (let [state (c/create-store (atom {:a [1 2 3]}))
+          pcur (query '{:build {:val ($ ?a)}
+                        :from [?a]}
+                      (c/sub-cursor state :a))]
+      (is (= 3 (count pcur)))
+      (is (= [1 2 3]
+             (for [p pcur]
+               (c/read p [:val]))))))
+
+  (testing "query with seq breakdown & transact"
+    (let [state (c/create-store (atom {:a [1 2 3]}))
+          pcur (query '{:build {:val ($ ?a)}
+                        :from [?a]}
+                      (c/sub-cursor state :a))]
+      (doseq [p pcur]
+        (c/transact! p [:val] inc))
+      (c/commit state)
+      (is (= [2 3 4]
+             (c/read state [:a])
+             (for [p pcur]
+               (c/read p [:val])))))))
+
+

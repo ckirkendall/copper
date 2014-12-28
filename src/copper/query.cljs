@@ -38,7 +38,7 @@
 
   ISeqable
   (-seq [this]
-    (for [idx (count source)]
+    (for [idx (range (count source))]
       (sub-cursor this idx)))
 
   ICounted
