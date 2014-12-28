@@ -1,6 +1,6 @@
-# copper
+# Copper
 
-A Clojure library designed to ... well, that part is up to you.
+An experimental react framework for ClojureScript.  Pulling the best ideas from Om, Reagent and Quiescent and adding a few of my own.
 
 ## Usage
 
