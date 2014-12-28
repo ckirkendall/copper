@@ -11,9 +11,21 @@
 (def edit-queue [base ::edits])
 (def last-edits [base ::last-edits])
 
+;; ---------------------------------------------------------------------
+;; Types
+
+(defrecord Store [source])
+
+(defrecord CopperRoot [stores root-component node render-control])
 
 ;; ---------------------------------------------------------------------
 ;; Protocols
+
+(defprotocol IStore
+  (-store [this]))
+
+(defn store [obj]
+  (-store obj))
 
 (defprotocol INotify
   (-notify [this path]))
@@ -103,49 +115,51 @@
 
 ;; ---------------------------------------------------------------------
 ;; Simple Store Cursor
-
 (extend-type Atom
-  IListen
-  (-listen! [db component path]
-    (let [full-path (concat deps path [::components])]
-      (swap! db update-in full-path (fn [components]
-                                      (add-to #{} components component)))))
-  IRemoveDep
-  (-remove-dep! [db component path]
-    (let [full-path (concat deps path [::components])]
-        (swap! db update-in full-path (fn [components]
-                                        (set (filter #(not= % component) components))))))
-  IReadable
-  (-read [db path]
-    (listen! db *component* path)
-    (get-in @db path))
+  IStore
+  (-store [db]
+    (specify (Store. db) 
+      IListen
+      (-listen! [_ component path]
+        (let [full-path (concat deps path [::components])]
+          (swap! db update-in full-path (fn [components]
+                                          (add-to #{} components component)))))
+      IRemoveDep
+      (-remove-dep! [_ component path]
+        (let [full-path (concat deps path [::components])]
+          (swap! db update-in full-path (fn [components]
+                                          (set (filter #(not= % component) components))))))
+      IReadable
+      (-read [this path]
+        (listen! this *component* path)
+        (get-in @db path))
 
-  ITransact
-  (-transact! [db path value]
-    (swap! db update-in edit-queue (fn [paths]
-                                     (add-to [] paths {:path path :value value}))))
+      ITransact
+      (-transact! [_ path value]
+        (swap! db update-in edit-queue (fn [paths]
+                                         (add-to [] paths {:path path :value value}))))
 
-  ICommit
-  (-commit [db]
-    (swap! db (fn [state]
-                (let [edits (get-in state edit-queue)
-                      new-state (reduce (fn [v {:keys [path value]}]
-                                          (assoc-in v path value))
-                                    state
-                                    edits)]
-                  (-> new-state
-                      (assoc-in last-edits edits)
-                      (assoc-in edit-queue nil))))))
+      ICommit
+      (-commit [_]
+        (swap! db (fn [state]
+                    (let [edits (get-in state edit-queue)
+                          new-state (reduce (fn [v {:keys [path value]}]
+                                              (assoc-in v path value))
+                                            state
+                                            edits)]
+                      (-> new-state
+                          (assoc-in last-edits edits)
+                          (assoc-in edit-queue nil))))))
 
-  INotificationSource
-  (-notify-deps [db]
-    (let [edits (get-in @db last-edits)
-          dep-graph (get-in @db deps)]
-      (notify-updates (map :path edits) dep-graph)))
+      INotificationSource
+      (-notify-deps [_]
+        (let [edits (get-in @db last-edits)
+              dep-graph (get-in @db deps)]
+          (notify-updates (map :path edits) dep-graph)))
 
-  IDirty
-  (-dirty? [db]
-    (not (nil? (get-in @db edit-queue)))))
+      IDirty
+      (-dirty? [_]
+        (not (nil? (get-in @db edit-queue)))))))
 
 
 (defn sub-cursor
@@ -236,27 +250,47 @@
            js/window
            (fn []
              (when @control-atm
-               (when (some dirty? stores)
-                 (doseq [store stores]
+               (when (some dirty? @stores)
+                 (doseq [store @stores]
                    (commit store)
                    (notify-deps store))
                  (.render js/React component node))
                (render-loop control-atm stores component node)))))
 
 
-(defn root [stores component node opts]
-  (let [render-control (atom true)
-        root-component (component nil opts)]
-    (.render js/React root-component node)
-    (render-loop render-control stores root-component node)
-    {:node node
-     :stores stores
-     :root-component root-component
-     :render-control render-control}))
+
+
+(defn create-store [source]
+  {:pre [(satisfies? IStore source)]}
+  (store source))
+
+
+(defn register-store! [{:keys [stores]} store]
+  {:pre [(instance? Store store)
+         (satisfies? IListen store)
+         (satisfies? IReadable store)
+         (satisfies? ICommit store)
+         (satisfies? INotificationSource store)
+         (satisfies? IDirty store)
+         (satisfies? ITransact store)
+         (satisfies? IRemoveDep store)]}
+  (swap! stores conj store))
+
+
+(defn root
+  ([component node opts] (root #{} component node opts))
+  ([stores component node opts]
+     (let [render-control (atom true)
+           stores-atm (atom #{})
+           root-component (component nil opts)]
+       (doseq [store stores]
+         (register-store! {:stores stores-atm} store))
+       (.render js/React root-component node)
+       (render-loop render-control stores-atm root-component node)
+       (CopperRoot. stores-atm root-component node render-control))))
 
 
 (defn unmount [{:keys [render-control node]}]
   (js/React.unmountComponentAtNode node)
   (reset! render-control false))
-
 
