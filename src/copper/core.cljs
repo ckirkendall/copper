@@ -224,18 +224,19 @@
 
 (defn component [renderer]
   (let [react-component
-        (.createClass js/React
-                      (specify! (react-fns renderer) 
-                        INotify
-                        (-notify [this path]
-                           (.forceUpdate this))
+        (.createClass
+         js/React
+         (specify! (react-fns renderer) 
+          INotify
+          (-notify [this path]
+                   (.forceUpdate this))
 
-                        IPrintWithWriter 
-                        (-pr-writer [this writer _]
-                           (-write writer
-                                   (pr-str "COMPONENT"
-                                           {:value (aget (.-props this) "value")
-                                            :statics (aget (.-props this) "statics")})))))]
+          IPrintWithWriter 
+          (-pr-writer [this writer _]
+             (-write writer
+                     (pr-str "CopperComponent"
+                             {:value (aget (.-props this) "value")
+                              :statics (aget (.-props this) "statics")})))))]
     (fn [value static-opts]
       (js/React.createElement react-component
                               #js {:value value :statics static-opts}))))
