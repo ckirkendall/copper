@@ -13,6 +13,15 @@
          3))
 
 
+(defn realize-value [form]
+  (walk/postwalk
+   (fn [node]
+     (if (satisfies? core/ITransact node)
+       (read node)
+       node))
+   form))
+
+
 (deftype ProxyCursor [source]
   core/IReadable
   (-read [_ path]
@@ -22,7 +31,7 @@
                   (if (satisfies? core/ITransact res)
                     (read res (vec rpaths))
                     (temp res rpaths)))
-                src))]
+                (realize-value src)))]
       (f source path)))
 
   core/ITransact
