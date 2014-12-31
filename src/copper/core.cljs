@@ -175,6 +175,7 @@
 ;; ---------------------------------------------------------------------
 ;; Simple Store Cursor
 
+
 (extend-type Atom
   IStore
   (-store [db]
@@ -249,20 +250,37 @@
 
 
 ;; ---------------------------------------------------------------------
-;; Extending Read to Base Assoc types
+;; Extending Read and Store to Base Assoc types
 
-(extend-protocol IReadable
-  PersistentHashMap
-  (-read [this path]
-    (get-in this path))
-
-  PersistentArrayMap
-  (-read [this path]
-    (get-in this path))
-
-  PersistentVector
+(extend-type PersistentHashMap
+  IStore
+  (-store [this]
+    (-store (atom this)))
+  
+  IReadable
   (-read [this path]
     (get-in this path)))
+
+
+(extend-type PersistentArrayMap
+  IStore
+  (-store [this]
+    (-store (atom this)))
+  
+  IReadable
+  (-read [this path]
+    (get-in this path)))
+
+
+(extend-type PersistentVector
+  IStore
+  (-store [this]
+    (-store (atom this)))
+  
+  IReadable
+  (-read [this path]
+    (get-in this path)))
+
 
 
 ;; ---------------------------------------------------------------------
