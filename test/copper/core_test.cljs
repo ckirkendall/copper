@@ -14,48 +14,6 @@
       (tu/strip-attr :data-react-checksum)))
 
 
-(deftest read-test
-  (testing "simple read on store"
-    (let [state (c/create-store (atom {:a {:b :c}}))]
-      (is (= :c (c/read state [:a :b])))
-      (is (= nil (c/read state [:x])))))
-  (testing "read on clojure map"
-    (let [state {:a {:b :c}}]
-      (is (= :c (c/read state [:a :b])))
-      (is (= nil (c/read state [:x])))))
-  (testing "read on clojure map"
-    (let [state [:a [:b]]]
-      (is (= :b (c/read state [1 0]))))))
-
-
-(deftest update-commit-test
-  (testing "simple transact"
-    (let [state (c/create-store (atom {:a {:b :fail}}))]
-      (c/update! state [:a :b] :pass)
-      (is (not= :pass (c/read state [:a :b])))
-      (c/commit state)
-      (is (= :pass (c/read state [:a :b]))))))      
-
-
-(deftest notify-test
-  (testing "basic positive notify"
-    (let [state (c/create-store (atom {:a {:b :c}}))
-          component (specify! #js{:state :failed}
-                      c/INotify
-                      (-notify [this path]
-                               (aset this "state" :passed))
-                      IPrintWithWriter
-                      (-pr-writer [this writer _]
-                         (-write writer (pr-str "COMP" {:state (.-state this)}))))]
-      (is (= :c (binding [c/*component* component]
-                  (c/read state [:a :b]))))
-      (c/update! state [:a :b] :pass)
-      (is (= :failed (.-state component)))
-      (c/commit state)
-      (c/notify-deps state)
-      (is (= :passed (.-state component))))))
-
-
 (deftest ^:async basic-render-test
   (testing "simple render test with state"
     (let [root-element (tu/root-element "r1")

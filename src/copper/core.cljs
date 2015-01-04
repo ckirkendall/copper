@@ -6,11 +6,6 @@
 
 (def ^:dynamic *component*)
 
-(def base ::base)
-(def deps [base ::deps])
-(def edit-queue [base ::edits])
-(def last-edits [base ::last-edits])
-
 ;; ---------------------------------------------------------------------
 ;; Types
 
@@ -104,36 +99,7 @@
 
 (defn dirty? [obj]
   (-dirty? obj))
-
-
-;; ---------------------------------------------------------------------
-;; Notify Logic
-
-(defn notify-tree [path tree]
-  (doseq [[k v]  tree]
-    (if (= k ::components)
-      (doseq [c v]
-        (notify c path))
-      (notify-tree path v))))
-
-
-(defn notify-update [path dep-graph]
-  (notify-tree
-   path
-   (reduce (fn [graph seg] 
-             (doseq [c (::components graph)]
-               (notify c path))
-             (get graph seg))
-           dep-graph
-           path)))
-
-
-(defn notify-updates [paths dep-graph]
-  (doseq [path paths]
-    (notify-update path dep-graph)))
-
-
-
+ 
 
 ;; ---------------------------------------------------------------------
 ;; Helper Functions
@@ -150,133 +116,27 @@
         (add-to #{} (aget component "_paths") [store path])))
 
 
-(defn build-path
-  ([path-parts] (build-path [] path-parts))
-  ([seed [part & rparts]]
-     (if part 
-       (let [res (cond
-                  (nil? part)
-                  seed
-
-                  (satisfies? IPath part)
-                  (concat seed (path part))
-
-                  :else
-                  (conj seed part))]
-         (build-path res rparts))
-       seed)))
-
-
 (defn cleanup [component]
   (let [paths (aget  component "_paths")]
     (doseq [[db path] paths]
       (remove-dep! db component path))))
 
 ;; ---------------------------------------------------------------------
-;; Simple Store Cursor
-
-
-(extend-type Atom
-  IStore
-  (-store [db]
-    (specify (Store. db) 
-      IListen
-      (-listen! [_ component path]
-        (let [full-path (concat deps path [::components])]
-          (swap! db update-in full-path (fn [components]
-                                          (add-to #{} components component)))))
-      IRemoveDep
-      (-remove-dep! [_ component path]
-        (let [full-path (concat deps path [::components])]
-          (swap! db update-in full-path (fn [components]
-                                          (set (filter #(not= % component) components))))))
-      IReadable
-      (-read [this path]
-        (listen! this *component* path)
-        (get-in @db path))
-
-      ITransact
-      (-transact! [_ path func]
-        (swap! db update-in edit-queue (fn [paths]
-                                         (add-to [] paths {:path path :ufn func}))))
-
-      ICommit
-      (-commit [_]
-        (swap! db (fn [state]
-                    (let [edits (get-in state edit-queue)
-                          new-state (reduce (fn [v {:keys [path ufn]}]
-                                              (update-in v path ufn))
-                                            state
-                                            edits)]
-                      (-> new-state
-                          (assoc-in last-edits edits)
-                          (assoc-in edit-queue nil))))))
-
-      INotificationSource
-      (-notify-deps [_]
-        (let [edits (get-in @db last-edits)
-              dep-graph (get-in @db deps)]
-          (notify-updates (map :path edits) dep-graph)))
-
-      IDirty
-      (-dirty? [_]
-        (not (nil? (get-in @db edit-queue)))))))
-
-
-(defn sub-cursor
-  "takes a path and existing cursor and returns a cursor
-   scoped to that path"
-  [cursor & path-parts]
-  (let [db cursor
-        path (build-path path-parts)]
-    (reify
-      IPath
-      (-path [this] path)
-      
-      IReadable
-      (-read [_  sub-path]
-        (read cursor (concat path sub-path)))
-
-      ITransact
-      (-transact! [_ sub-path value]
-        (transact! cursor (concat path sub-path) value))
-
-      IPrintWithWriter 
-      (-pr-writer [this writer _]
-        (-write writer
-                (pr-str "$"
-                        {:cursor cursor
-                         :path path}))))))
-
-
-;; ---------------------------------------------------------------------
 ;; Extending Read and Store to Base Assoc types
 
 (extend-type PersistentHashMap
-  IStore
-  (-store [this]
-    (-store (atom this)))
-  
   IReadable
   (-read [this path]
     (get-in this path)))
 
 
 (extend-type PersistentArrayMap
-  IStore
-  (-store [this]
-    (-store (atom this)))
-  
   IReadable
   (-read [this path]
     (get-in this path)))
 
 
 (extend-type PersistentVector
-  IStore
-  (-store [this]
-    (-store (atom this)))
-  
   IReadable
   (-read [this path]
     (get-in this path)))
