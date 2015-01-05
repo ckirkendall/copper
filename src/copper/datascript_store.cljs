@@ -9,7 +9,7 @@
     [copper.store :as store]
     [copper.basic-store :as bs]))
 
-(declare transact-datom)
+(declare transact-datom op->datoms explode-entity )
 
 (def base ::base)
 (def deps [base ::deps])
@@ -66,10 +66,10 @@
 (defn create-store [& [schema]]
   (let [ea (sorted-map)
         av (sorted-map)
-        db (store/-store
-            (atom {:ea ea
-                   :av av
-                   :schema schema}))]
+        db (atom {:ea ea
+                  :av av
+                  :schema schema})
+        sub-store (store/-store db)]
     (reify
       ISearch
       (-search [this [e a v tx added :as pattern]]
@@ -90,46 +90,60 @@
          added (filter #(= added (.-added %)))))
 
       store/IListen
-      (-listen! [_ component path]
-        (store/listen! db component [path]))
+      (-listen! [_ component [path]]
+        (store/listen! sub-store component path))
       
       store/IRemoveDep
       (-remove-dep! [_ component [path]]
-        (store/remove-dep! db component path))
+        (store/remove-dep! sub-store component path))
       
       store/IReadable
       (-read [this [path]]
         (store/listen! this core/*component* path)
-        (get-in @db path))
+        (get-in @db  path))
 
       store/ITransact
-      (-transact! [_ [datom]]
-        (swap! db update-in edit-queue (fn [datoms]
-                                         (core/add-to [] datoms datom))))
+      (-transact! [this [entities]]
+        (swap! db
+               update-in
+               edit-queue
+               (fn [cur-edits]
+                 (core/add-to [] cur-edits entities))))
 
       store/ICommit
-      (-commit [_]
-        (swap! db (fn [state]
-                    (let [edits (get-in state edit-queue)
-                          new-state (reduce (fn [v datom]
-                                              (transact-datom state datom))
-                                            state
-                                            edits)]
-                      (-> new-state
-                          (assoc-in last-edits edits)
-                          (assoc-in edit-queue nil))))))
+      (-commit [this]
+        (let [edits (get-in @db edit-queue)]
+          (doseq [edit edits]
+            (doseq [entity edit]
+              (let [tx 0
+                    datoms (->> [entity]
+                                (mapcat #(explode-entity this %))
+                                (mapcat #(op->datoms this % tx)))]
+                (doseq [datom datoms]
+                  (swap! db (fn [state]
+                              (transact-datom state datom)))))))
+          (swap! db
+                (fn [state]
+                  (-> state
+                      (assoc-in last-edits edits)
+                      (assoc-in edit-queue nil))))))
 
       store/INotificationSource
       (-notify-deps [_]
         (let [edits (get-in @db last-edits)
-              dep-graph (get-in @db deps)
-              ea-paths (map (fn [datom] [:ea (:e datom) (:a datom)]) edits)
-              av-paths (map (fn [datom] [:ea (:a datom) (:v datom)]) edits)]
+              dep-graph (get-in @db bs/deps)
+              ea-paths (map (fn [[op e a v]] [:ea e a]) (apply concat edits))
+              av-paths (map (fn [[op e a v]] [:av a v]) (apply concat edits))]
           (bs/notify-updates (concat ea-paths av-paths) dep-graph)))
 
       store/IDirty
       (-dirty? [_]
-        (store/dirty? db)))))
+        (store/dirty? sub-store))
+
+      IPrintWithWriter 
+      (-pr-writer [this writer _]
+        (-write writer
+                (pr-str "DS" db))))))
 
 (defn- update-in-sorted [map path f & args]
   (let [map (if (associative? map) map (sorted-map))
@@ -152,34 +166,29 @@
     (let [eid (:db/id entity)]
       (for [[a vs] (dissoc entity :db/id)
             v      (if (and (sequential? vs)
-                            (= :many (get-in db [:schema a :cardinality])))
+                            (= :many (store/read db [:schema a :cardinality])))
                      vs
                      [vs])]
         [:db/add eid a v]))
     [entity]))
 
 (defn- op->datoms [db [op e a v] tx]
-  (case op
-    :db/add
-      (if (= :many (store/read db [:schema a :cardinality]))
-        (when (empty? (-search db [e a v]))
-          [(datom e a v tx true)])
-        (if-let [old-datom (first (-search db [e a]))]
-          (when (not= (.-v old-datom) v)
-            [(datom e a (.-v old-datom) tx false)
-             (datom e a v tx true)])
-          [(datom e a v tx true)]))
-    :db/retract
-      (when-let [old-datom (first (-search db [e a v]))]
-        [(datom e a v tx false)])))
+  (let [res
+        (case op
+          :db/add
+          (if (= :many (store/read db [:schema a :cardinality]))
+            (when (empty? (-search db [e a v]))
+              [(datom e a v tx true)])
+            (if-let [old-datom (first (-search db [e a]))]
+              (when (not= (.-v old-datom) v)
+                [(datom e a (.-v old-datom) tx false)
+                 (datom e a v tx true)])
+              [(datom e a v tx true)]))
+          :db/retract
+          (when-let [old-datom (first (-search db [e a v]))]
+            [(datom e a v tx false)]))]
+    res))
 
-(defn transact! [db entities]
-  (let [tx     0
-        datoms (->> entities
-                    (mapcat #(explode-entity db %))
-                    (mapcat #(op->datoms db % tx)))]
-    (doseq [datom datoms]
-      (store/transact! db datom nil))))
 
 (defn next-eid [db & [offset]]
   (let [max-eid (or (-> (:ea db) keys last) 0)]

@@ -49,7 +49,8 @@
   (doseq [[k v]  tree]
     (if (= k ::components)
       (doseq [c v]
-        (core/notify c path))
+        (when c
+          (core/notify c path)))
       (notify-tree path v))))
 
 
@@ -58,7 +59,7 @@
    path
    (reduce (fn [graph seg] 
              (doseq [c (::components graph)]
-               (core/notify c path))
+               (when c (core/notify c path)))
              (get graph seg))
            dep-graph
            path)))
