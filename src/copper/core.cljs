@@ -1,6 +1,7 @@
-(ns copper.core)
+(ns copper.core
+  (:require [copper.store :as store]))
 
-(declare register-path add-to)
+(declare register-store-dep! add-to)
 
 (def render-pending (atom false))
 
@@ -9,101 +10,34 @@
 ;; ---------------------------------------------------------------------
 ;; Types
 
-(defrecord Store [source])
-
 (defrecord CopperRoot [stores root-component node render-control])
 
 ;; ---------------------------------------------------------------------
-;; Protocols
+;; Base Operations
 
-(defprotocol IStore
-  (-store [this]))
-
-(defn store [obj]
-  (-store obj))
-
-
-(defprotocol IPath
-  (-path [this]))
-
-(defn path [obj]
-  (-path obj))
+(defn read [store & params]
+  (when *component*
+    (register-store-dep! *component* store params))
+  (store/-read store params))
 
 
-(defprotocol INotify
-  (-notify [this path]))
-
-(defn notify [obj path]
-  (-notify obj path))
-
-
-(defprotocol IListen
-  (-listen! [this component path]))
-
-(defn listen! [store component path]
-  (-listen! store component path))
-
-
-(defprotocol IRemoveDep
-  (-remove-dep! [this component path]))
-
-(defn remove-dep! [store component path]
-  (-remove-dep! store component path))
-
-
-(defprotocol IReadable
-  (-read [this path]))
-
-(defn read
-  ([store] (read store [] nil))
-  ([store path] (read store path nil))
-  ([store path default]
-     (when *component*
-       (register-path *component* store path))
-     (let [res (-read store path)]
-       (if res res default))))
-
-
-(defprotocol ITransact
-  (-transact! [this path f]))
-
-(defn transact!
-  ([db f]
-     (-transact! db [] f))
-  ([db path f]
-     (-transact! db path f))) 
-
-(defn update!
-  ([db value]
-     (-transact! db [] (fn [] value)))
-  ([db path value]
-     (-transact! db path (fn [] value))))
-
-
-(defprotocol ICommit
-  (-commit [this]))
-
-(defn commit [obj] 
-  (-commit obj))
-
-
-(defprotocol INotificationSource
-  (-notify-deps [this]))
-
-(defn notify-deps [obj]
-  (-notify-deps obj))
-
-
-(defprotocol IDirty
-  (-dirty? [this]))
-
-(defn dirty? [obj]
-  (-dirty? obj))
+(defn transact! [db & args]
+  (store/-transact! db args)) 
  
 
 ;; ---------------------------------------------------------------------
-;; Helper Functions
+;; Component Notify Protocols
 
+(defprotocol INotify
+  (-notify [obj params]))
+
+
+(defn notify [obj params]
+  (-notify obj params))
+
+
+;; ---------------------------------------------------------------------
+;; Helper Functions
 
 (defn add-to [type container value]
   (if (empty? container)
@@ -111,35 +45,36 @@
     (conj container value)))
 
 
-(defn register-path [component store path]
+(defn register-store-dep! [component store params]
   (aset component "_paths"
-        (add-to #{} (aget component "_paths") [store path])))
+        (add-to #{} (aget component "_paths") [store params])))
 
 
 (defn cleanup [component]
   (let [paths (aget  component "_paths")]
-    (doseq [[db path] paths]
-      (remove-dep! db component path))))
+    (doseq [[db params] paths]
+      (apply store/remove-dep! db component params))))
+
 
 ;; ---------------------------------------------------------------------
 ;; Extending Read and Store to Base Assoc types
 
 (extend-type PersistentHashMap
-  IReadable
-  (-read [this path]
-    (get-in this path)))
+  store/IReadable
+  (-read [this [path default]]
+    (get-in this path default)))
 
 
 (extend-type PersistentArrayMap
-  IReadable
-  (-read [this path]
-    (get-in this path)))
+  store/IReadable
+  (-read [this [path default]]
+    (get-in this path default)))
 
 
 (extend-type PersistentVector
-  IReadable
-  (-read [this path]
-    (get-in this path)))
+  store/IReadable
+  (-read [this [path default]]
+    (get-in this path default)))
 
 
 
@@ -195,30 +130,21 @@
            js/window
            (fn []
              (when @control-atm
-               (when (some dirty? @stores)
+               (when (some store/dirty? @stores)
                  (doseq [store @stores]
-                   (commit store)
-                   (notify-deps store))
+                   (store/commit store)
+                   (store/notify-deps store))
                  (.render js/React component node))
                (render-loop control-atm stores component node)))))
 
 
-
-
 (defn create-store [source]
-  {:pre [(satisfies? IStore source)]}
-  (store source))
+  {:pre [(satisfies? store/IStore source)]}
+  (store/store source))
 
 
 (defn register-store! [{:keys [stores]} store]
-  {:pre [(instance? Store store)
-         (satisfies? IListen store)
-         (satisfies? IReadable store)
-         (satisfies? ICommit store)
-         (satisfies? INotificationSource store)
-         (satisfies? IDirty store)
-         (satisfies? ITransact store)
-         (satisfies? IRemoveDep store)]}
+  {:pre [(store/is-store? store)]}
   (swap! stores conj store))
 
 

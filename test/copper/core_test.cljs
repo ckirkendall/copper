@@ -1,6 +1,8 @@
 (ns copper.core-test
   (:require [cemerick.cljs.test :as t]
             [copper.core :as c]
+            [copper.store :as s]
+            [copper.basic-store :as bs]
             [copper.test-util :as tu]
             [copper.dom :as dom])
   (:require-macros [cemerick.cljs.test :refer [deftest testing is done]]))
@@ -21,7 +23,7 @@
           root-c (c/component
                   (fn [_ _]
                     (dom/button #js{:id "button1"
-                                    :onClick #(c/update! app-state [:a :b] :pass)})))
+                                    :onClick #(c/transact! app-state [:a :b] (fn [_] :pass))})))
           root (c/root #{app-state} root-c root-element {})]
       (tu/simulate-click-event (tu/by-id "button1"))
       (js/setTimeout
@@ -37,10 +39,10 @@
                   (fn [_ _]
                     (let [r (c/read app-state [:a :b])]
                       (dom/span nil
-                                (dom/span #js{:id "s2"}
-                                          (name r))
-                                (dom/button #js{:id "button2"
-                                                :onClick #(c/update! app-state [:a :b] :pass)})))))
+                        (dom/span #js{:id "s2"}
+                          (name r))
+                          (dom/button #js{:id "button2"
+                                          :onClick #(c/transact! app-state [:a :b] (fn [_] :pass))})))))
           root (c/root root-c root-element {})]
       (c/register-store! root app-state)
       (is (= "fail" (.-innerHTML (tu/by-id "s2"))))

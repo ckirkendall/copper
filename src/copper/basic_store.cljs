@@ -1,12 +1,26 @@
 (ns copper.basic-store
-  (:require [copper.core :as core :refer [read transact!]]
-            [clojure.walk :as walk]))
+  (:require
+   [copper.core :as core]
+   [copper.store :as store]
+   [clojure.walk :as walk]))
  
 
 (def base ::base)
 (def deps [base ::deps])
 (def edit-queue [base ::edits])
 (def last-edits [base ::last-edits])
+
+
+;; ---------------------------------------------------------------------
+;; Protocols
+
+
+(defprotocol IPath
+  (-path [this]))
+
+(defn path [obj]
+  (-path obj))
+
 
 ;; ---------------------------------------------------------------------
 ;; Helper Functions
@@ -19,8 +33,8 @@
                   (nil? part)
                   seed
 
-                  (satisfies? core/IPath part)
-                  (concat seed (core/path part))
+                  (satisfies? IPath part)
+                  (concat seed (path part))
 
                   :else
                   (conj seed part))]
@@ -55,54 +69,104 @@
     (notify-update path dep-graph)))
 
 
+
 ;; ---------------------------------------------------------------------
 ;; Simple Store Cursor
 
+
+(defn read
+  ([cursor]
+     (core/read cursor [] nil))
+  ([cursor path]
+     (core/read cursor path nil))
+  ([cursor path default]
+     (core/read cursor path default)))
+
+
+(defn transact! [cursor path func]
+  (core/transact! cursor path func))
+
+(defn update!
+  ([cursor value]
+     (transact! cursor [] (fn [] value)))
+  ([cursor path value]
+     (transact! cursor path (fn [] value))))
+
+
+(defn -listen! [db component path]
+  (let [full-path (concat deps path [::components])]
+    (swap! db update-in full-path (fn [components]
+                                    (core/add-to #{} components component)))))
+
+(defn -remove-dep! [db component path]
+  (let [full-path (concat deps path [::components])]
+    (swap! db update-in full-path (fn [components]
+                                    (set (filter #(not= % component) components))))))
+
+(defn -read [this path]
+  (let [path (or path [])]
+    (store/listen! this core/*component* path)
+    (get-in @(.-source this) path)))
+
+
+(defn -transact! [db path func]
+  {:pre [(ifn? func)]}
+  (swap! db update-in edit-queue (fn [paths]
+                                   (core/add-to [] paths {:path path :ufn func}))))
+
+(defn -commit [db]
+  (swap! db (fn [state]
+              (let [edits (get-in state edit-queue)
+                    new-state (reduce (fn [v {:keys [path ufn]}]
+                                        (update-in v path ufn))
+                                      state
+                                      edits)]
+                (-> new-state
+                    (assoc-in last-edits edits)
+                    (assoc-in edit-queue nil))))))
+
+(defn -notify-deps [db]
+  (let [edits (get-in @db last-edits)
+        dep-graph (get-in @db deps)]
+    (notify-updates (map :path edits) dep-graph)))
+
+
+(defn -dirty? [db]
+  (not (nil? (get-in @db edit-queue))))
+
+
+
 (extend-type Atom
-  core/IStore
+  store/IStore
   (-store [db]
-    (specify (core/Store. db)       
-      core/IListen
-      (-listen! [_ component path]
-                (let [full-path (concat deps path [::components])]
-                  (swap! db update-in full-path (fn [components]
-                                                  (core/add-to #{} components component)))))
-      core/IRemoveDep
-      (-remove-dep! [_ component path]
-                    (let [full-path (concat deps path [::components])]
-                      (swap! db update-in full-path (fn [components]
-                                                      (set (filter #(not= % component) components))))))
-      core/IReadable
-      (-read [this path]
-             (core/listen! this core/*component* path)
-             (get-in @db path))
+    (specify (store/Store. db)       
+      store/IListen
+      (-listen! [_ component [path]]
+        (-listen! db component path))
+      
+      store/IRemoveDep
+      (-remove-dep! [_ component [path]]
+        (-remove-dep! db component path))
+      
+      store/IReadable
+      (-read [this [path]]
+        (-read this path))
 
-      core/ITransact
-      (-transact! [_ path func]
-                  (swap! db update-in edit-queue (fn [paths]
-                                                   (core/add-to [] paths {:path path :ufn func}))))
+      store/ITransact
+      (-transact! [_ [path func]]
+        (-transact! db path func))
 
-      core/ICommit
+      store/ICommit
       (-commit [_]
-               (swap! db (fn [state]
-                           (let [edits (get-in state edit-queue)
-                                 new-state (reduce (fn [v {:keys [path ufn]}]
-                                                     (update-in v path ufn))
-                                                   state
-                                                   edits)]
-                             (-> new-state
-                                 (assoc-in last-edits edits)
-                                 (assoc-in edit-queue nil))))))
+        (-commit db))
 
-      core/INotificationSource
+      store/INotificationSource
       (-notify-deps [_]
-                    (let [edits (get-in @db last-edits)
-                          dep-graph (get-in @db deps)]
-                      (notify-updates (map :path edits) dep-graph)))
+        (-notify-deps db))
 
-      core/IDirty
+      store/IDirty
       (-dirty? [_]
-               (not (nil? (get-in @db edit-queue)))))))
+        (-dirty? db)))))  
 
 
 (defn sub-cursor
@@ -112,16 +176,16 @@
   (let [db cursor
         path (build-path path-parts)]
     (reify
-      core/IPath
+      IPath
       (-path [this] path)
       
-      core/IReadable
-      (-read [_  sub-path]
+      store/IReadable
+      (-read [_  [sub-path]]
         (read cursor (concat path sub-path)))
 
-      core/ITransact
-      (-transact! [_ sub-path value]
-        (transact! cursor (concat path sub-path) value))
+      store/ITransact
+      (-transact! [_ [sub-path func]]
+        (transact! cursor (concat path sub-path) func))
 
       IPrintWithWriter 
       (-pr-writer [this writer _]
@@ -136,63 +200,55 @@
 ;; Extending Store to Base Assoc types
 
 (extend-type PersistentHashMap
-  core/IStore
+  store/IStore
   (-store [this]
-    (core/-store (atom this))))
+    (store/-store (atom this))))
 
 
 (extend-type PersistentArrayMap
-  core/IStore
+  store/IStore
   (-store [this]
-    (core/-store (atom this))))
+    (store/-store (atom this))))
 
 
 (extend-type PersistentVector
-  core/IStore
+  store/IStore
   (-store [this]
-    (core/-store (atom this))))
+    (store/-store (atom this))))
+
+
 
 
 ;; ---------------------------------------------------------------------
 ;; Associtive Query Cursor
 
-(comment
-  (query '{:build {:value ($ ?a :id) :display ($ ?a :id)}
-           :from [?a ?b *v]
-           :where [(= (read ?a [:id]) (read ?b [:id]))
-                   (= (read ?b [:tm]) *v)]}
-         ($ store :a)
-         ($ store :b)
-         3))
-
-
 (defn realize-value [form]
   (walk/postwalk
    (fn [node]
-     (if (satisfies? core/ITransact node)
+     (if (satisfies? store/ITransact node)
        (read node)
        node))
    form))
 
 
 (deftype ProxyCursor [source]
-  core/IReadable
-  (-read [_ path]
+  store/IReadable
+  (-read [_ [path]]
     (let [f (fn temp [src [path-part  & rpaths]]
               (if path-part
                 (let [res (get src path-part)]
-                  (if (satisfies? core/ITransact res)
+                  (if (satisfies? store/ITransact res)
                     (read res (vec rpaths))
                     (temp res rpaths)))
                 (realize-value src)))]
       (f source path)))
 
-  core/ITransact
-  (-transact! [_ path func]
+  store/ITransact
+  (-transact! [_ [path func]]
     (let [f (fn temp [src [path-part  & rpaths]]
               (if path-part
                 (let [res (get src path-part)]
-                  (if (satisfies? core/ITransact res)
+                  (if (satisfies? store/ITransact res)
                     (transact! res (vec rpaths) func)
                     (temp res rpaths)))
                 (throw (ex-info "invalid path" {:path path :source source}))))]

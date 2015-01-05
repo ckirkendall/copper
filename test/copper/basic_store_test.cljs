@@ -1,32 +1,33 @@
 (ns copper.basic-store-test
   (:require [cemerick.cljs.test :as t]
             [copper.core :as c]
+            [copper.store :as s]
             [copper.test-util :as tu]
-            [copper.basic-store :refer [query sub-cursor]])
+            [copper.basic-store :refer [read update! transact! query sub-cursor]])
   (:require-macros [cemerick.cljs.test :refer [deftest testing is done]]))
 
  
 (deftest read-test
   (testing "simple read on store"
     (let [state (c/create-store (atom {:a {:b :c}}))]
-      (is (= :c (c/read state [:a :b])))
-      (is (= nil (c/read state [:x])))))
+      (is (= :c (read state [:a :b])))
+      (is (= nil (read state [:x])))))
   (testing "read on clojure map"
     (let [state {:a {:b :c}}]
-      (is (= :c (c/read state [:a :b])))
-      (is (= nil (c/read state [:x])))))
+      (is (= :c (read state [:a :b])))
+      (is (= nil (read state [:x])))))
   (testing "read on clojure map"
     (let [state [:a [:b]]]
-      (is (= :b (c/read state [1 0]))))))
+      (is (= :b (read state [1 0]))))))
 
 
 (deftest update-commit-test
   (testing "simple transact"
     (let [state (c/create-store (atom {:a {:b :fail}}))]
-      (c/update! state [:a :b] :pass)
-      (is (not= :pass (c/read state [:a :b])))
-      (c/commit state)
-      (is (= :pass (c/read state [:a :b]))))))      
+      (update! state [:a :b] :pass)
+      (is (not= :pass (read state [:a :b])))
+      (s/commit state)
+      (is (= :pass (read state [:a :b]))))))      
 
 
 (deftest notify-test
@@ -40,11 +41,11 @@
                       (-pr-writer [this writer _]
                          (-write writer (pr-str "COMP" {:state (.-state this)}))))]
       (is (= :c (binding [c/*component* component]
-                  (c/read state [:a :b]))))
-      (c/update! state [:a :b] :pass)
+                  (read state [:a :b]))))
+      (update! state [:a :b] :pass)
       (is (= :failed (.-state component)))
-      (c/commit state)
-      (c/notify-deps state)
+      (s/commit state)
+      (s/notify-deps state)
       (is (= :passed (.-state component))))))
 
 
@@ -54,9 +55,9 @@
           pcur (query '{:build {:val ($ ?a)}
                         :from [?a]}
                       (sub-cursor state :a))]
-      (is (= 1 (c/read pcur [0 :val])))
-      (is (= 2 (c/read pcur [1 :val])))
-      (is (= 3 (c/read pcur [2 :val])))))
+      (is (= 1 (read pcur [0 :val])))
+      (is (= 2 (read pcur [1 :val])))
+      (is (= 3 (read pcur [2 :val])))))
 
 
   (testing "query with seq breakdown & transact"
@@ -65,12 +66,12 @@
                         :from [?a]}
                       (sub-cursor state :a))]
       (doseq [p pcur]
-        (c/transact! p [:val] inc))
-      (c/commit state)
+        (transact! p [:val] inc))
+      (s/commit state)
       (is (= [2 3 4]
-             (c/read state [:a])
+             (read state [:a])
              (for [p pcur]
-               (c/read p [:val]))))))
+               (read p [:val]))))))
 
   (testing "simple query with where clause"
     (let [state (c/create-store (atom {:a [1 2 3]}))
@@ -79,10 +80,10 @@
                         :where [(> (read ?a) 1)]}
                       (sub-cursor state :a))]
       (is (= 2 (count pcur)))
-      (is (= 2 (c/read pcur [0 :val])))
-      (is (= 3 (c/read pcur [1 :val])))
+      (is (= 2 (read pcur [0 :val])))
+      (is (= 3 (read pcur [1 :val])))
       (is (= [2 3]
              (for [p pcur]
-               (c/read p [:val])))))))
+               (read p [:val])))))))
 
 
