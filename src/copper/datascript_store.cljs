@@ -5,7 +5,9 @@
   (:require
     [clojure.set :as set]
     [clojure.walk :as walk]
-    [copper.core :as copper]))
+    [copper.core :as core]
+    [copper.store :as store]
+    [copper.basic-store :as bs]))
 
 (declare transact-datom)
 
@@ -64,7 +66,7 @@
 (defn create-store [& [schema]]
   (let [ea (sorted-map)
         av (sorted-map)
-        db (copper/-store
+        db (store/-store
             (atom {:ea ea
                    :av av
                    :schema schema}))]
@@ -74,42 +76,42 @@
         (cond->>
          (case [(when e :+) (when a :+) (when v :+)]
            [:+  nil nil]
-           (->> (copper/read this [:ea e]) vals (apply concat))
+           (->> (store/read this [:ea e]) vals (apply concat))
            [nil :+  nil]
-           (->> (copper/read this [:av a]) vals (apply concat))
+           (->> (store/read this [:av a]) vals (apply concat))
            [:+  :+  nil]
-           (copper/read this [:ea e a])
+           (store/read this [:ea e a])
            [nil :+  :+]
-           (copper/read this [:av a v])
+           (store/read this [:av a v])
            [:+  :+  :+]
-           (->> (copper/read this [:ea e a])
+           (->> (store/read this [:ea e a])
                 (filter #(= v (.-v %)))))
          tx    (filter #(= tx (.-tx %)))
          added (filter #(= added (.-added %)))))
 
-      copper/IListen
+      store/IListen
       (-listen! [_ component path]
-        (copper/listen! db component path))
+        (store/listen! db component [path]))
       
-      copper/IRemoveDep
-      (-remove-dep! [_ component path]
-        (-remove-dep! db component path))
+      store/IRemoveDep
+      (-remove-dep! [_ component [path]]
+        (store/remove-dep! db component path))
       
-      copper/IReadable
-      (-read [this path]
-        (core/listen! this core/*component* path)
+      store/IReadable
+      (-read [this [path]]
+        (store/listen! this core/*component* path)
         (get-in @db path))
 
-      core/ITransact
-      (-transact! [_ datom _]
+      store/ITransact
+      (-transact! [_ [datom]]
         (swap! db update-in edit-queue (fn [datoms]
-                                         (core/add-to [] datoms {:datom path}))))
+                                         (core/add-to [] datoms datom))))
 
-      core/ICommit
+      store/ICommit
       (-commit [_]
         (swap! db (fn [state]
                     (let [edits (get-in state edit-queue)
-                          new-state (reduce (fn [v {:keys [datom]}]
+                          new-state (reduce (fn [v datom]
                                               (transact-datom state datom))
                                             state
                                             edits)]
@@ -117,15 +119,17 @@
                           (assoc-in last-edits edits)
                           (assoc-in edit-queue nil))))))
 
-      core/INotificationSource
+      store/INotificationSource
       (-notify-deps [_]
         (let [edits (get-in @db last-edits)
-              dep-graph (get-in @db deps)]
-          (notify-updates (map :path edits) dep-graph)))
+              dep-graph (get-in @db deps)
+              ea-paths (map (fn [datom] [:ea (:e datom) (:a datom)]) edits)
+              av-paths (map (fn [datom] [:ea (:a datom) (:v datom)]) edits)]
+          (bs/notify-updates (concat ea-paths av-paths) dep-graph)))
 
-      core/IDirty
+      store/IDirty
       (-dirty? [_]
-        (not (nil? (get-in @db edit-queue)))))))
+        (store/dirty? db)))))
 
 (defn- update-in-sorted [map path f & args]
   (let [map (if (associative? map) map (sorted-map))
@@ -157,7 +161,7 @@
 (defn- op->datoms [db [op e a v] tx]
   (case op
     :db/add
-      (if (= :many (copper/read db [:schema a :cardinality]))
+      (if (= :many (store/read db [:schema a :cardinality]))
         (when (empty? (-search db [e a v]))
           [(datom e a v tx true)])
         (if-let [old-datom (first (-search db [e a]))]
@@ -169,13 +173,13 @@
       (when-let [old-datom (first (-search db [e a v]))]
         [(datom e a v tx false)])))
 
-(defn transact! [db entitie]
+(defn transact! [db entities]
   (let [tx     0
         datoms (->> entities
                     (mapcat #(explode-entity db %))
                     (mapcat #(op->datoms db % tx)))]
     (doseq [datom datoms]
-      (copper/-transact! db datom nil))))
+      (store/transact! db datom nil))))
 
 (defn next-eid [db & [offset]]
   (let [max-eid (or (-> (:ea db) keys last) 0)]
