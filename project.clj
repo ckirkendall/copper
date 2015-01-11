@@ -3,9 +3,10 @@
   :url "http://example.com/FIXME"
   :license {:name "Eclipse Public License"
             :url "http://www.eclipse.org/legal/epl-v10.html"}
-  :dependencies [[org.clojure/clojure "1.6.0"] 
+  :dependencies [[org.clojure/clojure "1.6.0"]
                  [org.clojure/clojurescript "0.0-2505" :scope "provided"]
-                 [com.facebook/react "0.12.2.1"]]
+                 [com.facebook/react "0.12.2.1"]
+                 [datascript "0.7.2"]]
   :plugins [[com.cemerick/clojurescript.test "0.3.2-SNAPSHOT"]
             [lein-cljsbuild "1.0.4-SNAPSHOT"]
             [lein-ancient "0.5.4"]]
@@ -31,7 +32,7 @@
                                           :optimizations :none
                                           :pretty-print true
                                           :source-map true}}
-                              {:id "test" 
+                              {:id "test"
                                :notify-command ["phantomjs" :cljs.test/runner "target/test/copper.js"]
                                :source-paths ["test" "src"]
                                :compiler {:output-to "target/test/copper.js"
