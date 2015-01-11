@@ -6,7 +6,7 @@
             [copper.basic-store :refer [read update! transact! query sub-cursor]])
   (:require-macros [cemerick.cljs.test :refer [deftest testing is done]]))
 
- 
+
 (deftest read-test
   (testing "simple read on store"
     (let [state (c/create-store (atom {:a {:b :c}}))]
@@ -27,7 +27,7 @@
       (update! state [:a :b] :pass)
       (is (not= :pass (read state [:a :b])))
       (s/commit state)
-      (is (= :pass (read state [:a :b]))))))      
+      (is (= :pass (read state [:a :b]))))))
 
 
 (deftest notify-test
@@ -85,5 +85,3 @@
       (is (= [2 3]
              (for [p pcur]
                (read p [:val])))))))
-
-

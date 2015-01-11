@@ -8,23 +8,25 @@
 
 
 (deftest basic-query-test
-  (let [db  (d/create-store  {:aka { :cardinality :many }})]
+  (let [db (d/create-store  {:aka { :db/cardinality :db.cardinality/many }})]
     (s/transact! db [[:db/add 1 :name "Ivan"]
                      [:db/add 1 :name "Petr"]
                      [:db/add 1 :aka  "Devil"]
                      [:db/add 1 :aka  "Tupen"]])
     (s/commit db)
-    (is (= (d/q '{:find [?v]
-                  :where [[1 :name ?v]]} db)
+    (is (= #{[1]}  (d/q '[:find ?v
+                         :where [?v :name "Petr"]] @db)))
+    (is (= (d/q '[ :find ?v
+                  :where [1 :name ?v]] @db)
            #{["Petr"]}))
-    (is (= (d/q '{:find [?v]
-                  :where [[1 :aka ?v]]} db)
+    (is (= (d/q '[:find ?v
+                  :where [1 :aka ?v]] @db)
            #{["Devil"] ["Tupen"]}))))
 
 
 
 (deftest notify-test
-  (let [db  (d/create-store  {:aka { :cardinality :many }})]
+  (let [db  (d/create-store {:aka { :db/cardinality :db.cardinality/many }})]
     (s/transact! db [[:db/add 1 :name "Ivan"]
                      [:db/add 1 :aka  "Devil"]
                      [:db/add 1 :aka  "Tupen"]])
@@ -39,14 +41,10 @@
                                             (-write writer (pr-str "COMP" {:state (.-state this)}))))]
         (is (= #{["Ivan"]}
                (binding [c/*component* component]
-                 (d/q '{:find [?v]
-                        :where [[1 :name ?v]]} db))))
+                 (d/q '[:find ?v
+                        :where [1 :name ?v]] @db))))
         (s/transact! db [[:db/add 1 :name "Petr"]])
         (is (= :failed (.-state component)))
         (s/commit db)
         (s/notify-deps db)
         (is (= :passed (.-state component)))))))
-
-
-
-
